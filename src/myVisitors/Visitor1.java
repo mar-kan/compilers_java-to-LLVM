@@ -125,10 +125,7 @@ public class Visitor1 extends GJDepthFirst<String, String> {
         // finds its class in MyClasses' list and adds the method there
         ClassData myClass = allClasses.searchClass(classname);
 
-        // checks method for all possible declaration errors
-        MethodData newmethod = new MethodData(myName, myType, argumentList, classname);
-        declarationEvaluator.evaluateMethod(newmethod, myClass);
-        myClass.addMethod(newmethod);
+        myClass.addMethod(myName, myType, argumentList, classname);
 
         n.f7.accept(this, classname+"."+myName);    // deals only with its declarations
 
@@ -189,7 +186,7 @@ public class Visitor1 extends GJDepthFirst<String, String> {
     {
         String type = n.f0.accept(this, scope);
         String name = n.f1.accept(this, scope);
-        return type+" "+name;
+        return type+" %"+name;
     }
 
 
@@ -206,7 +203,7 @@ public class Visitor1 extends GJDepthFirst<String, String> {
             return null;
 
         String type = n.f0.accept(this, scope);
-        String id = n.f1.accept(this, scope);
+        String id = '%'+n.f1.accept(this, scope);
 
         if (scope.contains("."))    /** in method **/
         {
@@ -318,7 +315,7 @@ public class Visitor1 extends GJDepthFirst<String, String> {
 
 
     /******** data types ********/
-    // the types are returned
+    // the types are returned in the LLVM form
 
     /**
      * f0 -> ArrayType()

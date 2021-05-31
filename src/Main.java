@@ -17,7 +17,7 @@ public class Main {
         FileInputStream fis = null;
         for (String arg : args)     // supports many files.
         {
-            System.out.print("File "+arg+":");
+            System.out.println("File "+arg);
 
             fis = new FileInputStream(arg);
             MiniJavaParser parser = new MiniJavaParser(fis);
@@ -40,13 +40,6 @@ public class Main {
             {   // after catching an exception the program continues to the next file
                 System.err.println(ex.getMessage());
                 ex.printStackTrace();
-                System.out.println();
-            }
-            finally
-            {
-                System.out.println();
-                assert visit1 != null;
-                visit1.getAllClasses().printClassOffsets();
                 System.out.println();
             }
         }

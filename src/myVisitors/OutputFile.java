@@ -26,40 +26,33 @@ public class OutputFile {
         writer.write(str);
         writer.flush();
         writer.close();
-
     }
 
     public void writeVtables(AllClasses allClasses) throws IOException
     {
-        FileWriter writer = new FileWriter(file.getName()); // overwrites file
+        FileWriter writer = new FileWriter(file.getName());     // overwrites file
+        boolean flag;
 
-        for (ClassData aClass : allClasses.getClasses())
+        for (int i=allClasses.getClasses().size()-1; i>=0; i--) // printing classes in reverse
         {
-            int method_count = aClass.getMethods().size();
-            writer.write("@."+aClass.getName()+"_vtable = global ["+method_count+" x i8*] [\n");
+            flag = false;
+            ClassData aClass = allClasses.getClasses().get(i);
+            int method_count = aClass.getMethodSizeWithExtending();
 
-            if (aClass.getExtending() != null)
-            {
-                for (MethodData method : aClass.getExtending().getMethods())
-                {
-                    writer.write("\ti8* bitcast ("+method.getType()+" (i8*");
-                    if (method.getArguments() != null)
-                    {
-                        for (VariableData argument : method.getArguments())
-                        {
-                            writer.write(","+argument.getType());
-                        }
+            // writes class vtable
+            writer.write("@."+aClass.getName()+"_vtable = global ["+method_count+" x i8*] [");
 
-                    }
-                    writer.write(")* @"+aClass.getExtending().getName()+"."+method.getName()+" to i8*)\n");
-                }
-            }
+            // writes all its methods
             for (MethodData method : aClass.getMethods())
             {
-                if (method.isOverriding())
-                    continue;
+                if (flag)
+                    writer.write(",\n");
+                else
+                    writer.write('\n');
 
                 writer.write("\ti8* bitcast ("+method.getType()+" (i8*");
+                flag = true;
+
                 if (method.getArguments() != null)
                 {
                     for (VariableData argument : method.getArguments())
@@ -68,13 +61,61 @@ public class OutputFile {
                     }
 
                 }
-                writer.write(")* @"+aClass.getName()+"."+method.getName()+" to i8*)\n");
+                writer.write(")* @"+aClass.getName()+"."+method.getName()+" to i8*)");
+            }
+
+            // writes every method of the extending that aClass isn't overridden by the subclass
+            if (aClass.getExtending() != null)
+            {
+                for (MethodData method : aClass.getExtending().getMethods())
+                {
+                    if (method.isOverridden())
+                        continue;
+                    if (flag)
+                        writer.write(",\n");
+                    else
+                        writer.write('\n');
+
+                    writer.write("\ti8* bitcast ("+method.getType()+" (i8*");
+                    flag = true;
+                    if (method.getArguments() != null)
+                    {
+                        for (VariableData argument : method.getArguments())
+                        {
+                            writer.write(","+argument.getType());
+                        }
+                    }
+                    writer.write(")* @"+aClass.getExtending().getName()+"."+method.getName()+" to i8*)\n");
+                }
             }
             writer.write("]\n\n");
         }
-        // main class
-        writer.write("@."+allClasses.getMain_class_name()+"_vtable = global [0 x i8*] []\n\n");
 
+        // main class
+        writer.write("@."+allClasses.getMain_class_name()+"_vtable = global ["+allClasses.getMainClass().getMethods().size()+" x i8*] []\n\n");
+
+        // main class' methods
+        flag = false;
+        for (MethodData method : allClasses.getMainClass().getMethods())
+        {
+            if (flag)
+                writer.write(",\n");
+            else
+                writer.write('\n');
+
+            writer.write("\ti8* bitcast ("+method.getType()+" (i8*");
+            flag = true;
+
+            if (method.getArguments() != null)
+            {
+                for (VariableData argument : method.getArguments())
+                {
+                    writer.write(","+argument.getType());
+                }
+
+            }
+            writer.write(")* @"+allClasses.getMain_class_name()+"."+method.getName()+" to i8*)");
+        }
         writer.flush();
         writer.close();
     }

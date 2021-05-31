@@ -7,16 +7,20 @@ public class MethodData {
     private final String name;
     private final String type;
     private final String arguments_to_string;
+    private int offset;
 
     private boolean overriding = false;
+    private boolean overridden = false;
+
     private LinkedList<VariableData> arguments = new LinkedList<>();
     private LinkedList<VariableData> variables = new LinkedList<>();
 
-    public MethodData(String methodname, String methodtype, String args, String classname) throws Exception
+    public MethodData(String methodname, String methodtype, String args, String classname, int offset) throws Exception
     {
         this.name = methodname;
         this.type = methodtype;
         this.arguments_to_string = args;
+        this.offset = offset;
 
         if (args.equals(""))
         {
@@ -30,7 +34,7 @@ public class MethodData {
             if (split_args[i].contains(","))    // removes commas
                 split_args[i] = split_args[i].substring(0, split_args[i].indexOf(","));
             if (searchArguments(split_args[i]) == null)
-                this.arguments.add(new VariableData(split_args[i], split_args[i-1]));
+                this.arguments.add(new VariableData(split_args[i], split_args[i-1], -1));
             else
                 throw new Exception(classname+"."+this.name+": error: Argument "+split_args[i]+" has already been declared.");
         }
@@ -67,7 +71,7 @@ public class MethodData {
     /** adds a variable to method **/
     public void addVariable(String name, String type)
     {
-        variables.add(new VariableData(name, type));
+        variables.add(new VariableData(name, type, -1));
     }
 
 
@@ -106,5 +110,20 @@ public class MethodData {
     public String getArguments_to_string()
     {
         return arguments_to_string;
+    }
+
+    public int getOffset()
+    {
+        return offset;
+    }
+
+    public void setOverridden(boolean overridden)
+    {
+        this.overridden = overridden;
+    }
+
+    public boolean isOverridden()
+    {
+        return overridden;
     }
 }

@@ -125,6 +125,7 @@ public class DeclarationEvaluator {
 
                     checkOverridingArgs(ext_method, method, myClass);    // checks methods' arguments
                     method.setOverriding(true);
+                    ext_method.setOverridden(true);
                 }
             }
             temp = temp.getExtending();
