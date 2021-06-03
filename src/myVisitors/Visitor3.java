@@ -164,7 +164,19 @@ public class Visitor3 extends GJDepthFirst<String, String> {
         n.f8.accept(this, classname+"."+myName);
 
         String return_exp = n.f10.accept(this, classname+"."+myName);
-        output.writeString("\tret "+myType+" "+return_exp+" \n}\n");
+
+        /** returning a field **/
+        if (allClasses.varIsField(return_exp, classname+"."+myName))
+        {
+            VariableData var = allClasses.findVariable(return_exp, classname+"."+myName);
+            return_exp = loadField(var);
+
+            output.writeString("\t%_"+reg_num+" = load "+var.getType()+", "+var.getType()+"* "+return_exp+'\n');
+            return_exp = "%_"+reg_num++;
+        }
+
+
+        output.writeString("\n\tret "+myType+" "+return_exp+"\n}\n");
 
         return null;
     }
@@ -189,12 +201,16 @@ public class Visitor3 extends GJDepthFirst<String, String> {
 
         // allocating variable
         output.writeString("\t"+id+" = alloca "+type+'\n');
+
+        // initialization for ints and booleans
+        if (type.equals("i32") || type.equals("i1"))
+            output.writeString("\tstore "+type+" 0, "+type+"* "+id+"\n\n");
+
         return type;
     }
 
 
-    /******** arguments ********/
-    // they are combined in a string and returned as in Visitor1
+    /******** arguments ********
 
     /**
      * f0 -> FormalParameter()
@@ -250,8 +266,7 @@ public class Visitor3 extends GJDepthFirst<String, String> {
     }
 
 
-    /******** statements ********/
-    // every statement returns its type
+    /******** statements ********
 
     /**
      * f0 -> Block()
@@ -292,11 +307,7 @@ public class Visitor3 extends GJDepthFirst<String, String> {
     public String visit(AssignmentStatement n, String scope) throws Exception
     {
         String id = '%'+n.f0.accept(this, scope);
-        String expr = n.f2.accept(this, id);    // passes var to be assigned
-
-        /** an allocation was made **/
-        if (expr.equals("i8*"))
-            return id+"="+expr;
+        String expr = n.f2.accept(this, scope);    // passes var to be assigned
 
         /** changing boolean values to 0 and 1 **/
         if (expr.equals("true"))
@@ -307,11 +318,6 @@ public class Visitor3 extends GJDepthFirst<String, String> {
         // finding variable of id
         VariableData var = allClasses.findVariable(id, scope);
         assert var != null;
-
-        /** var is a field **/
-        {
-
-        }
 
         /** expr is a variable **/
         VariableData variable = allClasses.findVariable("%"+expr, scope);
@@ -325,6 +331,10 @@ public class Visitor3 extends GJDepthFirst<String, String> {
 
             expr = "%_"+(reg_num-1);
         }
+
+        /** var is a field **/
+        if (allClasses.varIsField(var.getName(), scope))
+            id = loadField(var);
 
         // assignment
         if (var.getType().equals("i32") || var.getType().contains("i32") || var.getType().equals("i1"))
@@ -367,9 +377,9 @@ public class Visitor3 extends GJDepthFirst<String, String> {
                 "\tbr label %oob_ok_"+oob_num+"\n\n\toob_ok_"+(oob_num++)+":\n");
 
         // finds index and stores expr in id[index]
-        output.writeString("\t%_"+(reg_num++)+" = add i32 1, 0\n"+
+        output.writeString("\t%_"+(reg_num++)+" = add i32 1, "+index+"\n"+
                 "\t%_"+(reg_num++)+" = getelementptr i32, i32* "+array_address+", i32 %_"+(reg_num-2)+'\n'+
-                "\tstore i32 1, i32* %_"+(reg_num-1)+"\n\n");
+                "\tstore i32 "+(Integer.parseInt(index)+1)+", i32* %_"+(reg_num-1)+"\n\n");
 
         return id+"["+index+"]="+expr;
     }
@@ -387,7 +397,7 @@ public class Visitor3 extends GJDepthFirst<String, String> {
     public String visit(IfStatement n, String scope) throws Exception
     {
         String expr = n.f2.accept(this, scope);
-        if (expr.contains("and"))   // and expressions are printed in AndExpression
+        if (expr.contains("and"))   // and expressions are printed in
             return null;
 
         output.writeString("\tbr i1 "+expr+", label %if_then_"+if_num+", label %if_else_"+if_num+"\n\n");
@@ -454,8 +464,7 @@ public class Visitor3 extends GJDepthFirst<String, String> {
     }
 
 
-    /******** expressions ********/
-    // every expression returns its type
+    /******** expressions ********
 
     /**
      * f0 -> AndExpression()
@@ -488,22 +497,21 @@ public class Visitor3 extends GJDepthFirst<String, String> {
 
         if (!isBooleanLiteral(expr1))
         {
-            expr1 = "%"+expr1;
-            output.writeString("\t%_"+(reg_num++)+" = load i1, i1* "+expr1+'\n');
+            output.writeString("\t%_"+reg_num+" = load i1, i1* %"+expr1+'\n');
+            expr1 = "%_"+reg_num++;
         }
 
-        output.writeString("\tbr i1 %_"+(reg_num-1)+", label %exp_res_"+(and_num+1)+", label %ex_res_"+and_num+"\n\n"+
+        output.writeString("\tbr i1 %_"+(reg_num-1)+", label %exp_res_"+(and_num+1)+", label %exp_res_"+and_num+"\n\n"+
                 "\texp_res_"+(and_num++)+":\n\tbr label %exp_res_"+(and_num+2)+"\n\n"+
                 "\texp_res_"+and_num+":\n");
 
         if (!isBooleanLiteral(expr2))
         {
             output.writeString("\t%_"+reg_num+" = load i1, i1* %"+expr2+'\n');
-            expr2 = "%_"+(reg_num++);
+            expr2 = "%_"+reg_num++;
         }
-        output.writeString("\tbr label %expr_res_"+(++and_num)+"\n\n"+
-                "\texpr_res_"+(and_num++)+":\n\tbr label %exp_res_"+and_num+"\n");
-
+        output.writeString("\tbr label %exp_res_"+(++and_num)+"\n\n"+
+                "\texp_res_"+(and_num++)+":\n\tbr label %exp_res_"+and_num+"\n");
 
         return expr1+" and "+expr2;
     }
@@ -524,14 +532,14 @@ public class Visitor3 extends GJDepthFirst<String, String> {
         {
             expr1 = "%"+expr1;
             output.writeString("\t%_"+reg_num+" = load i32, i32* "+expr1+'\n');
-            expr1 = "%_"+String.valueOf(reg_num++);
+            expr1 = "%_"+reg_num++;
         }
 
         if (!isIntegerLiteral(expr2))
         {
             expr2 = "%"+expr2;
             output.writeString("\t%_"+(reg_num++)+" = load i32, i32* "+expr2+'\n');
-            expr2 = "%_"+String.valueOf(reg_num++);
+            expr2 = "%_"+reg_num++;
         }
         String expr_reg = String.valueOf(reg_num++);
         output.writeString("\t%_"+expr_reg+" = icmp slt i32 "+expr1+", "+expr2+'\n');
@@ -549,8 +557,7 @@ public class Visitor3 extends GJDepthFirst<String, String> {
         String expr1 = n.f0.accept(this, scope);
         String expr2 = n.f2.accept(this, scope);
 
-        return expr1+"+"+expr2;
-
+        return arithmeticOperation(expr1, expr2, '+', scope);
     }
 
     /**
@@ -564,7 +571,7 @@ public class Visitor3 extends GJDepthFirst<String, String> {
         String expr1 = n.f0.accept(this, scope);
         String expr2 = n.f2.accept(this, scope);
 
-        return expr1+"-"+expr2;
+        return arithmeticOperation(expr1, expr2, '-', scope);
     }
 
     /**
@@ -577,8 +584,8 @@ public class Visitor3 extends GJDepthFirst<String, String> {
     {
         String expr1 = n.f0.accept(this, scope);
         String expr2 = n.f2.accept(this, scope);
-        
-        return expr1+"*"+expr2;
+
+        return arithmeticOperation(expr1, expr2, '*', scope);
     }
 
     /**
@@ -594,7 +601,22 @@ public class Visitor3 extends GJDepthFirst<String, String> {
         VariableData array = null;//allClasses.findVariable(arrayName, scope);
         String index = n.f2.accept(this, scope);    // checks that index evaluates to int
 
-        return "int";
+        String array_reg = "%_"+reg_num++;
+        output.writeString("\t"+array_reg+" = load i32*, i32** %"+arrayName+"\n" +
+                "    %_"+reg_num+++" = load i32, i32* %_"+(reg_num-2)+"\n" +
+                "    %_"+reg_num+++" = icmp sge i32 "+index+", 0\n" +
+                "    %_"+reg_num+++" = icmp slt i32 "+index+", %_"+(reg_num-3)+"\n" +
+                "    %_"+reg_num+++" = and i1 %_"+(reg_num-3)+", %_"+(reg_num-2)+"\n" +
+                "    br i1 %_"+(reg_num-1)+", label %oob_ok_"+oob_num+", label %oob_err_"+oob_num+"\n\n" +
+                "    oob_err_"+oob_num+":\n" +
+                "    call void @throw_oob()\n" +
+                "    br label %oob_ok_"+oob_num+"\n\n" +
+                "    oob_ok_"+oob_num+++":\n" +
+                "    %_"+reg_num+++" = add i32 1, "+index+"\n" +
+                "    %_"+reg_num+++" = getelementptr i32, i32* "+array_reg+", i32 %_"+(reg_num-2)+"\n" +
+                "    %_"+reg_num+" = load i32, i32* %_"+(reg_num-1)+"\n\n");
+
+        return "%_"+reg_num++;
     }
 
     /**
@@ -610,7 +632,12 @@ public class Visitor3 extends GJDepthFirst<String, String> {
             return "int[]";
 
         VariableData array = null;
-
+        /*if (array != null)
+        {
+            /** array is a field **
+            if (varIsField(var, scope))
+                id = loadField(var);
+        }*/
         return "int";
     }
 
@@ -625,12 +652,19 @@ public class Visitor3 extends GJDepthFirst<String, String> {
     @Override
     public String visit(MessageSend n, String scope) throws Exception
     {
-        ClassData myClass = null;
+        ClassData myClass;
         VariableData object = null;
         output.writeString("\n");
 
         // f0 can be object or classname
-        String objectname = "%"+n.f0.accept(this, scope);
+        String objectname = n.f0.accept(this, scope);
+
+        if (objectname.contains("%_")) // is register
+        {
+
+        }
+
+        objectname = '%'+objectname;
 
         // checking if classname
         myClass = allClasses.searchClass(objectname);
@@ -733,7 +767,7 @@ public class Visitor3 extends GJDepthFirst<String, String> {
     }
 
 
-    /******** primary expressions ********/
+    /******** primary expressions ********
 
     /**
      * f0 -> IntegerLiteral()
@@ -807,7 +841,7 @@ public class Visitor3 extends GJDepthFirst<String, String> {
                 "\tcall void @throw_nsz()\n\tbr label %nsz_ok_"+if_num+"\n\n\tnsz_ok_"+(nsz_num++)+":\n");
 
         // allocation
-        output.writeString("\t%_"+(reg_num++)+" = call i8* @calloc(132 %_"+(reg_num-3)+", i32 4)\n"+
+        output.writeString("\t%_"+(reg_num++)+" = call i8* @calloc(i32 %_"+(reg_num-3)+", i32 4)\n"+
                 "\t%_"+(reg_num++)+" = bitcast i8* %_"+(reg_num-2)+" to i32*\n\tstore i32 2, i32* %_"+(reg_num-1)+"\n\n");
 
         return "%_"+(reg_num - 1);
@@ -820,9 +854,9 @@ public class Visitor3 extends GJDepthFirst<String, String> {
      * f3 -> ")"
      */
     @Override
-    public String visit(AllocationExpression n, String objectname) throws Exception
+    public String visit(AllocationExpression n, String scope) throws Exception
     {
-        String id = n.f1.accept(this, objectname);
+        String id = n.f1.accept(this, scope);
         //bytes = class offset of fields + 8 for vtable
         ClassData aClass = allClasses.searchClass(id);
         assert aClass != null;
@@ -831,11 +865,11 @@ public class Visitor3 extends GJDepthFirst<String, String> {
         output.writeString("\t%_"+object_reg+" = call i8* @calloc(i32 1, i32 "+bytes+")\n");
 
         String vtablePtr = "%_"+reg_num++;
-        output.writeString("\t"+vtablePtr+" = bitcast i8* %_"+(reg_num-2)+" to i8***\n");
-        output.writeString("\t%_"+reg_num+" = getelementptr [2 x i8*], [2 x i8*]* @."+id+"_vtable, i32 0, i32 0\n");
-        output.writeString("\tstore i8** %_"+(reg_num++)+", i8*** "+vtablePtr+"\n");
-        output.writeString("\tstore i8* %_"+object_reg+", i8** "+objectname+"\n");
-        return "i8*";
+        output.writeString("\t"+vtablePtr+" = bitcast i8* %_"+(reg_num-2)+" to i8***\n"+
+        "\t%_"+reg_num+" = getelementptr [2 x i8*], [2 x i8*]* @."+id+"_vtable, i32 0, i32 0\n"+
+        "\tstore i8** %_"+(reg_num++)+", i8*** "+vtablePtr+"\n");
+
+        return "%_"+object_reg;
     }
 
     /**
@@ -859,7 +893,7 @@ public class Visitor3 extends GJDepthFirst<String, String> {
         return n.f1.accept(this, argu);
     }
 
-    /******** data types ********/
+    /******** data types ********
     // the data types are returned in the LLVM form
 
     /**
@@ -902,7 +936,7 @@ public class Visitor3 extends GJDepthFirst<String, String> {
 
 
     /** Other **/
-    boolean isIntegerLiteral(String str)
+    public boolean isIntegerLiteral(String str)
     {
         for (int i=0; i<str.length(); i++)
         {
@@ -912,11 +946,48 @@ public class Visitor3 extends GJDepthFirst<String, String> {
         return true;
     }
 
-    boolean isBooleanLiteral(String str)
+    public boolean isBooleanLiteral(String str)
     {
         return str.equals("true") || str.equals("false");
     }
 
+    public String loadField(VariableData var) throws IOException
+    {
+        output.writeString("\t%_"+reg_num+++" = getelementptr i8, i8* %this, "+var.getType()+" "+(var.getOffset()+8)+"\n"
+                +"\t%_"+reg_num+++" = bitcast i8* %_"+(reg_num-2)+" to "+var.getType()+"*\n");
+
+        return "%_"+(reg_num-1);  // returns the register of the ptr to this->var
+    }
+
+    public String arithmeticOperation(String expr1, String expr2, int op, String scope) throws Exception {
+        VariableData var1 = allClasses.findVariable(expr1, scope);
+        VariableData var2 = allClasses.findVariable(expr2, scope);
+
+        if (var1 != null)
+        {
+            output.writeString("\t%_"+reg_num+" = load i32, i32* "+var1.getName()+"\n");
+            expr1 = "%_"+reg_num++;
+        }
+        ;
+        if (var2 != null)
+        {
+            output.writeString("\t%_"+reg_num+" = load i32, i32* "+var2.getName()+"\n");
+            expr2 = "%_"+reg_num++;
+        }
+
+        if (op=='+')
+            output.writeString("\t%_"+reg_num+" = add i32 "+expr1+", "+expr2+"\n");
+        else if (op=='-')
+            output.writeString("\t%_"+reg_num+" = sub i32 "+expr1+", "+expr2+"\n");
+        else if (op=='*')
+            output.writeString("\t%_"+reg_num+" = mul i32 "+expr1+", "+expr2+"\n");
+        else if (op=='&')
+            output.writeString("\t%_"+reg_num+" = and i32 "+expr1+", "+expr2+"\n");
+        else
+            throw new Exception("Wrong op");
+
+        return "%_"+reg_num++;    // returns the register of the result
+    }
 
 }
 

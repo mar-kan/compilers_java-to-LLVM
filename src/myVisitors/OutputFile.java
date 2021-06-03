@@ -50,14 +50,21 @@ public class OutputFile {
                 else
                     writer.write('\n');
 
-                writer.write("\ti8* bitcast ("+method.getType()+" (i8*");
+                String type = method.getType();
+                if (!type.equals("i32") && !type.equals("i32*") && !type.equals("i1"))
+                    type = "i8*";
+
+                writer.write("\ti8* bitcast ("+type+" (i8*");
                 flag = true;
 
                 if (method.getArguments() != null)
                 {
                     for (VariableData argument : method.getArguments())
                     {
-                        writer.write(","+argument.getType());
+                        type = argument.getType();
+                        if (!type.equals("i32") && !type.equals("i32*") && !type.equals("i1"))
+                            type = "i8*";
+                        writer.write(", "+type);
                     }
 
                 }
@@ -76,13 +83,21 @@ public class OutputFile {
                     else
                         writer.write('\n');
 
-                    writer.write("\ti8* bitcast ("+method.getType()+" (i8*");
+                    String type = method.getType();
+                    if (!type.equals("i32") && !type.equals("i32*") && !type.equals("i1"))
+                        type = "i8*";
+
+                    writer.write("\ti8* bitcast ("+type+" (i8*");
+
                     flag = true;
                     if (method.getArguments() != null)
                     {
                         for (VariableData argument : method.getArguments())
                         {
-                            writer.write(","+argument.getType());
+                            type = argument.getType();
+                            if (!type.equals("i32") && !type.equals("i32*") && !type.equals("i1"))
+                                type = "i8*";
+                            writer.write(","+type);
                         }
                     }
                     writer.write(")* @"+aClass.getExtending().getName()+"."+method.getName()+" to i8*)\n");
@@ -103,14 +118,22 @@ public class OutputFile {
             else
                 writer.write('\n');
 
-            writer.write("\ti8* bitcast ("+method.getType()+" (i8*");
+            String type = method.getType();
+            if (!type.equals("i32") && !type.equals("i32*") && !type.equals("i1"))
+                type = "i8*";
+
+            writer.write("\ti8* bitcast ("+type+" (i8*");
+
             flag = true;
 
             if (method.getArguments() != null)
             {
                 for (VariableData argument : method.getArguments())
                 {
-                    writer.write(","+argument.getType());
+                    type = argument.getType();
+                    if (!type.equals("i32") && !type.equals("i32*") && !type.equals("i1"))
+                        type = "i8*";
+                    writer.write(","+type);
                 }
 
             }

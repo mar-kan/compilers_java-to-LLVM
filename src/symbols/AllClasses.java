@@ -90,6 +90,28 @@ public class AllClasses {
         }
     }
 
+    public boolean varIsField(String var, String scope)
+    {   // checks if a variable is a field of a class
+
+        if (scope == null)
+            return false;
+
+        if (scope.contains(".")) // in method of class
+        {
+            String classname;
+            classname = scope.substring(0, scope.indexOf("."));
+
+            return searchClass(classname).searchVariable(var) != null;
+        }
+        else if (scope.equals("main"))  // in main
+            return false;
+        else // in class
+        {
+            ClassData aClass = searchClass(scope);
+            return aClass.searchVariable(var) != null;
+        }
+    }
+
     /** setters and getters **/
     public void setMain_class_name(String mainname)
     {

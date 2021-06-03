@@ -54,7 +54,7 @@ public class ClassData {
     {
         for (VariableData var : fields)
         {
-            if (var.getName().equals(varname))
+            if (var.getName().equals(varname) || (var.getName()).equals('%'+varname))
                 return var;
         }
 

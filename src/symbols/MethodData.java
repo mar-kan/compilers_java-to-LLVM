@@ -46,7 +46,7 @@ public class MethodData {
         // searches in the rest variables
         for (VariableData var : this.variables)
         {
-            if (var.getName().equals(varname))
+            if (var.getName().equals(varname) || var.getName().equals('%'+varname))
                 return var;
         }
 
@@ -61,7 +61,7 @@ public class MethodData {
         {
             for (VariableData var : this.arguments)
             {
-                if (var.getName().equals(varname))
+                if (var.getName().equals(varname) || (var.getName()).equals('%'+varname))
                     return var;
             }
         }
