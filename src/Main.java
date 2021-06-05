@@ -1,3 +1,4 @@
+import llvmTranslator.LlvmVisitor;
 import myVisitors.*;
 import syntaxtree.*;
 
@@ -23,7 +24,7 @@ public class Main {
             MiniJavaParser parser = new MiniJavaParser(fis);
 
             Goal root = parser.Goal();
-            Visitor1 visit1 = null;
+            Visitor1 visit1;
 
             try{
                 /** 1st visitor of HW2 remained to store everything in symbol tables **/
@@ -33,7 +34,7 @@ public class Main {
                 while (arg.contains("/"))
                     arg = arg.substring(arg.indexOf("/")+1);
                 arg = arg.substring(0, arg.indexOf("."));
-                Visitor3 visit3 = new Visitor3(arg+".ll", visit1.getAllClasses());
+                LlvmVisitor visit3 = new LlvmVisitor(arg+".ll", visit1.getAllClasses());
                 root.accept(visit3, null);
             }
             catch(Exception ex)
