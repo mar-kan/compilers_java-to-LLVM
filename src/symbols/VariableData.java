@@ -5,6 +5,7 @@ public class VariableData {
 
     private final String name;
     private final String type;
+    private int value;
     private int offset;
 
 
@@ -12,6 +13,7 @@ public class VariableData {
     {
         this.name = varname;
         this.type = vartype;
+        this.value = 0;
         this.offset = offset;
     }
 
@@ -31,5 +33,15 @@ public class VariableData {
     public int getOffset()
     {
         return offset;
+    }
+
+    public void setValue(int value)
+    {
+        this.value = value;
+    }
+
+    public int getValue()
+    {
+        return value;
     }
 }

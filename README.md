@@ -1,4 +1,4 @@
-Compilers Project 2
+Compilers Project 3
 -----------------
 Kanellaki Maria-Anna  -  1115201400060
 
@@ -11,14 +11,15 @@ Execution instructions: $ java Main [input files]
 
 -----------------
 
-Package <symbols> with the classes is almost intact from proj2. Offsets were added as fields for methods and variables.
+Package <symbols> with the classes is almost intact from proj2. Offsets were added inside the classes (for methods and 
+variables.)
 
-Visitor1 was kept almost intact to fill the classes of <symbols>. Types are now inserted with the LLVM format and IDs
-with a '%' in front.
+Visitor1 was kept almost intact to fill the <symbols>'s classes . Types are now used in the LLVM format (in symbols too).
 
-Translator is the new Visitor that was created to translate the minijava inputs.
+package llvmTranslator was created, including the new visitor that is used for the translation and a class that manages
+the output file.
 
-OutputFile was also created in <myVisitors> package for convenience. It is used to print everything in files.
+
 
 
 
