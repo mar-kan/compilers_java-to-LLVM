@@ -34,7 +34,7 @@ public class ClassData {
     public void addField(String var_name, String var_type)
     {
         this.fields.add(new VariableData(var_name, var_type, field_offsets));
-        this.field_offsets = updateOffset(field_offsets, var_type);
+        this.field_offsets = updateOffset(this.field_offsets, var_type);
     }
 
     /** adds a method in list methods
@@ -122,9 +122,9 @@ public class ClassData {
     /** updates offset according to var's type **/
     public int updateOffset(int offset, String type)
     {
-        if (type.equals("int"))
+        if (type.equals("i32"))
             return offset+4;
-        else if (type.equals("boolean"))
+        else if (type.equals("i1"))
             return ++offset;
         else
             return offset+8;
@@ -158,12 +158,7 @@ public class ClassData {
         else
             lastField = fields.get(fields.size()-1);
 
-        if (lastField.getType().equals("i32"))
-            return field_offsets - 4;
-        if (lastField.getType().equals("i1"))
-            return field_offsets - 1;
-
-        return field_offsets - 8;
+        return lastField.getOffset();
     }
 
     /** setters and getters **/

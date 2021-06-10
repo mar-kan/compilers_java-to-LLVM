@@ -126,6 +126,9 @@ public class DeclarationEvaluator {
                     checkOverridingArgs(ext_method, method, myClass);    // checks methods' arguments
                     method.setOverriding(true);
                     ext_method.setOverridden(true);
+
+                    /** also changes the register counter of the overriding method to continue from the overriden's **/
+                    method.setMyRegCount(ext_method.getMyRegCount());
                 }
             }
             temp = temp.getExtending();

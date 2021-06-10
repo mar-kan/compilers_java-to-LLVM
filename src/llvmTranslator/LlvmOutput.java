@@ -8,7 +8,7 @@ import symbols.VariableData;
 import java.io.*;
 
 /** class manages the output .ll file **/
-public class OutputFile {
+public class LlvmOutput {
 
     private File file;
     private AllClasses allClasses;
@@ -22,7 +22,7 @@ public class OutputFile {
     private int and_num=0;
 
 
-    public OutputFile(String filename, AllClasses allClasses) throws IOException
+    public LlvmOutput(String filename, AllClasses allClasses) throws IOException
     {
         this.file = new File(filename);
         this.allClasses = allClasses;
@@ -148,7 +148,9 @@ public class OutputFile {
     /** writes a method declaration **/
     public void writeMethodDeclaration(String classname, String methodName, String methodType, String args) throws IOException
     {
-        reg_num = 0;    // starting registers again from 0 in every different scope
+        // finds method and gets its register count
+        MethodData myMethod = allClasses.searchClass(classname).searchMethod(methodName);
+        reg_num = myMethod.getMyRegCount();
 
         // writing method declaration
         if (args == null)
@@ -167,6 +169,9 @@ public class OutputFile {
                         "\tstore "+split_args[i-1]+" "+split_args[i]+", "+split_args[i-1]+"* %"+split_args[i].substring(split_args[i].indexOf(".")+1)+"\n\n");
             }
         }
+
+        // sets method's reg_count
+        myMethod.setMyRegCount(reg_num);  // sets it to the 1st unused reg_num
     }
 
     /** writes assignment expressions **/
@@ -234,6 +239,35 @@ public class OutputFile {
                 "\tbr i1 %_"+(reg_num-1)+", label %oob_ok_"+oob_num+", label %oob_err_"+oob_num+"\n\n"+
                 "\toob_err_"+oob_num+":\n\tcall void @throw_oob()\n"+
                 "\tbr label %oob_ok_"+oob_num+"\n\n\toob_ok_"+(oob_num++)+":\n");
+    }
+
+    /** writes an if statement **/
+    public void writeIfStart(String expr) throws IOException
+    {
+        this.writeString("\tbr i1 "+expr+", label %if_then_"+if_num+", label %if_else_"+if_num+"\n\n");
+    }
+
+    /** writes then part of the if **/
+    public void writeIfThenStart() throws IOException
+    {
+        this.writeString("\tif_then_"+if_num+":\n");
+    }
+
+    /** writes else part of the if **/
+    public void writeIfElseStart() throws IOException
+    {
+        this.writeString("\tif_else_"+if_num+":\n");
+    }
+
+    /** writes closing of the if **/
+    public void goToIfEnd() throws IOException
+    {
+        this.writeString("\tbr label %if_end_"+if_num+"\n\n");
+    }
+
+    public void writeIfEnd() throws IOException
+    {
+        this.writeString("\tif_end_"+(if_num++)+":\n");
     }
 
     /** writes print statement **/
@@ -320,19 +354,17 @@ public class OutputFile {
     }
 
     /** writes method calls **/
-    public String writeMessageSend(String objectname, MethodData method, String args) throws IOException
+    public String writeMessageSend(String objectPtr, MethodData method, String args) throws IOException
     {
-        String objectPtr = "%_"+reg_num++;
-        this.writeString('\t'+objectPtr+" = load i8*, i8** "+objectname+'\n'+
-                "\t%_"+reg_num+++" = bitcast i8* "+objectPtr+" to i8***\n"+
+        this.writeString("\t%_"+reg_num+++" = bitcast i8* "+objectPtr+" to i8***\n"+
                 "\t%_"+reg_num+++" = load i8**, i8*** %_"+(reg_num-2)+'\n'+
-                "\t%_"+reg_num+++" = getelementptr i8*, i8** %_"+(reg_num-2)+", i32 0\n"+
+                "\t%_"+reg_num+++" = getelementptr i8*, i8** %_"+(reg_num-2)+", i32 "+method.getOffset()+"\n"+
                 "\t%_"+reg_num+++" = load i8*, i8** %_"+(reg_num-2)+'\n');
 
         this.writeString("\t%_"+reg_num+++" = bitcast i8* %_"+(reg_num-2)+" to "+method.getType()+" (i8*");
 
         if (args.equals(""))
-            this.writeString(")*\n\t%_"+reg_num+++" = call "+method.getType()+" %_"+(reg_num-2)+"(i8*)\n");
+            this.writeString(")*\n\t%_"+reg_num+++" = call "+method.getType()+" %_"+(reg_num-2)+"(i8* "+objectPtr+")\n");
         else
         {
             String[] split_args = args.split(" ");
@@ -369,7 +401,8 @@ public class OutputFile {
 
         // allocation
         this.writeString("\t%_"+(reg_num++)+" = call i8* @calloc(i32 %_"+(reg_num-3)+", i32 4)\n"+
-                "\t%_"+(reg_num++)+" = bitcast i8* %_"+(reg_num-2)+" to i32*\n\tstore i32 2, i32* %_"+(reg_num-1)+"\n\n");
+                "\t%_"+(reg_num++)+" = bitcast i8* %_"+(reg_num-2)+" to i32*\n\t" +
+                "store i32 2, i32* %_"+(reg_num-1)+"\n\n");
 
         return "%_"+(reg_num - 1);  // returns register of ptr to array
     }
@@ -377,13 +410,15 @@ public class OutputFile {
     /** writes object allocations **/
     public String writeObjectAlloc(ClassData aClass) throws IOException
     {
-        int bytes = 8 /* v-table */ + aClass.getLastFieldOffset() /* offset of last field*/;
+        int bytes = 8 /* v-table */ + aClass.getField_offsets() /* offsets including last field's*/;
         int object_reg = reg_num++;
         this.writeString("\t%_"+object_reg+" = call i8* @calloc(i32 1, i32 "+bytes+")\n");
 
+        int method_count = aClass.getMethodSizeWithExtending();
+
         String vtablePtr = "%_"+reg_num++;
         this.writeString("\t"+vtablePtr+" = bitcast i8* %_"+(reg_num-2)+" to i8***\n"+
-                "\t%_"+reg_num+" = getelementptr [2 x i8*], [2 x i8*]* @."+aClass.getName()+"_vtable, i32 0, i32 0\n"+
+                "\t%_"+reg_num+" = getelementptr ["+method_count+" x i8*], ["+method_count+" x i8*]* @."+aClass.getName()+"_vtable, i32 0, i32 0\n"+
                 "\tstore i8** %_"+(reg_num++)+", i8*** "+vtablePtr+"\n");
 
         return "%_"+object_reg; // returns register of ptr to object
@@ -393,19 +428,31 @@ public class OutputFile {
     /** writes the instructions required to load a field in a register before using it **/
     public String writeLoadField(VariableData var) throws IOException
     {
-        this.writeString("\t%_"+reg_num+++" = getelementptr i8, i8* %this, "+var.getType()+" "+(var.getOffset()+8)+"\n"
-                +"\t%_"+reg_num+++" = bitcast i8* %_"+(reg_num-2)+" to "+var.getType()+"*\n");
+        String type;
+        if (var.getType().equals("i1") || var.getType().equals("i32") || var.getType().contains("i32"))
+            type = var.getType();   // keeps field type
+        else
+            type = "i8*";   // converts field(object) type to i8*
+
+        this.writeString("\t%_"+reg_num+++" = getelementptr i8, i8* %this, "+type+" "+(var.getOffset()+8)+"\n"
+                +"\t%_"+reg_num+++" = bitcast i8* %_"+(reg_num-2)+" to "+type+"*\n");
 
         return "%_"+(reg_num-1);  // returns the num of register of ptr to this->var
     }
 
     /** writes the load of a variable's value **/
-    public String writeLoadValue(VariableData var) throws IOException
+    public String writeLoadValue(VariableData var, String load_name) throws IOException
     {
-        this.writeString("\t%_"+reg_num+++" = load "+var.getType()+", "+var.getType()+"* %_"+(reg_num-2)+'\n');
+        String type;
+        if (var.getType().equals("i1") || var.getType().equals("i32") || var.getType().contains("i32"))
+            type = var.getType();   // keeps field type
+        else
+            type = "i8*";   // converts field(object) type to i8*
+
+        this.writeString("\t%_"+reg_num+++" = load "+type+", "+type+"* "+load_name+'\n');
         return "%_"+(reg_num-1);    // returns where value was loaded
     }
 
-    //TODO: IF, AND, WHILE, ARRAYLENGTH, MSGSEND->REGISTER
-    //TODO: registers as objects
+    //TODO: IF, AND, WHILE, ARRAYLENGTH, NOTEXPRESSION
+    //TODO: END: accept paths in input files
 }

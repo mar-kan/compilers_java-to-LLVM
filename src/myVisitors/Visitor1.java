@@ -186,6 +186,7 @@ public class Visitor1 extends GJDepthFirst<String, String> {
     {
         String type = n.f0.accept(this, scope);
         String name = n.f1.accept(this, scope);
+
         return type+" %"+name;
     }
 

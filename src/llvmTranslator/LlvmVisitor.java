@@ -9,14 +9,14 @@ import symbols.*;
 
 public class LlvmVisitor extends GJDepthFirst<String, String> {
 
-    private OutputFile output;
+    private LlvmOutput output;
     private AllClasses allClasses;
     private Utils utils = new Utils();
 
 
     public LlvmVisitor(String filename, AllClasses classes) throws IOException
     {
-        output = new OutputFile(filename, classes);
+        output = new LlvmOutput(filename, classes);
         allClasses = classes;
     }
 
@@ -134,6 +134,10 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         String myName = n.f2.accept(this, classname);
         String args = n.f4.accept(this, classname+"."+myName);
 
+        // stores llvm type
+        if (!myType.equals("i32") && !myType.equals("i1") && !myType.contains("i32"))
+            myType = "i8*";
+
         // writes method declaration
         output.writeMethodDeclaration(classname, myName, myType, args);
 
@@ -147,14 +151,21 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         {
             // loads its ptr
             VariableData var = allClasses.findVariable(return_exp, classname+"."+myName);
-            output.writeLoadField(var);
+            return_exp = output.writeLoadField(var);
 
             // loads its value
-            return_exp = output.writeLoadValue(var);
+            return_exp = output.writeLoadValue(var, return_exp);
         }
 
-        // writes method's return expression and closes it
+        // changing boolean values to 0 and 1
+        if (return_exp.equals("true"))
+            return_exp = "1";
+        else if (return_exp.equals("false"))
+            return_exp = "0";
+
+        /** writes method's return expression and closes it **/
         output.writeString("\n\tret "+myType+" "+return_exp+"\n}\n");
+
         return null;
     }
 
@@ -173,6 +184,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         if (allClasses.searchClass(scope) != null)
             return type;
 
+        // stores llvm type
         if (allClasses.searchClass(type) != null)
             type = "i8*";
 
@@ -181,8 +193,9 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
 
         // initialization for ints and booleans
         if (type.equals("i32") || type.equals("i1"))
-            output.writeString("\tstore "+type+" 0, "+type+"* "+id+"\n\n");
+            output.writeString("\tstore "+type+" 0, "+type+"* "+id+"\n");
 
+        output.writeString("\n");
         return type;
     }
 
@@ -239,6 +252,10 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     {
         String type = n.f0.accept(this, scope);
         String name = n.f1.accept(this, scope);
+
+        if (!type.equals("i32") && !type.equals("i1") && !type.contains("i32"))
+            type = "i8*";
+
         return type+" %."+name;
     }
 
@@ -284,13 +301,17 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     public String visit(AssignmentStatement n, String scope) throws Exception
     {
         String id = '%'+n.f0.accept(this, scope);
-        String expr = n.f2.accept(this, scope);    // passes var to be assigned
+        String expr = n.f2.accept(this, scope);
 
         /** changing boolean values to 0 and 1 **/
         if (expr.equals("true"))
             expr = "1";
         else if (expr.equals("false"))
             expr = "0";
+
+        // removes class name
+        if (expr.contains(","))
+            expr = expr.substring(0, expr.indexOf(","));
 
         output.writeAssignment(id, expr, scope);
         return id+"="+expr;
@@ -332,23 +353,20 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     public String visit(IfStatement n, String scope) throws Exception
     {
         String expr = n.f2.accept(this, scope);
-
-        int exp = n.f4.f0.which;
         if (expr.contains("and"))   // and expressions are printed in
             return null;
 
-        //output.writeString("\tbr i1 "+expr+", label %if_then_"+if_num+", label %if_else_"+if_num+"\n\n");
+        output.writeIfStart(expr);
 
-       /* output.writeString("\tif_else_"+if_num+":\n");
+        output.writeIfElseStart();
         String else_expr = n.f6.accept(this, scope);
-        output.writeString("\tbr label %if_end_"+if_num+"\n\n");
+        output.goToIfEnd();
 
-        output.writeString("\tif_then_"+if_num+":\n");
+        output.writeIfThenStart();
         String then_expr = n.f4.accept(this, scope);
-        output.writeString("\tbr label %if_end_"+if_num+"\n\n");
+        output.goToIfEnd();
 
-        output.writeString("\tif_end_"+(if_num++)+":\n");
-*/
+        output.writeIfEnd();
         return null;
     }
 
@@ -392,6 +410,10 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     public String visit(PrintStatement n, String scope) throws Exception
     {
         String expr = n.f2.accept(this, scope);
+
+        if (expr.contains(",")) // removes classname
+            expr = expr.substring(0,expr.indexOf(","));
+
         output.writePrintStatement(expr);
         return null;
     }
@@ -428,6 +450,18 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         String expr1 = n.f0.accept(this, scope);
         String expr2 = n.f2.accept(this, scope);
 
+        /** changing boolean values to 0 and 1 **/
+        if (expr1.equals("true"))
+            expr1 = "1";
+        else if (expr1.equals("false"))
+            expr1 = "0";
+
+        /** changing boolean values to 0 and 1 **/
+        if (expr2.equals("true"))
+            expr2 = "1";
+        else if (expr2.equals("false"))
+            expr2 = "0";
+
         /*if (!utils.isBooleanLiteral(expr1))
         {
             output.writeString("\t%_"+reg_num+" = load i1, i1* %"+expr1+'\n');
@@ -459,6 +493,18 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     {
         String expr1 = n.f0.accept(this, scope);
         String expr2 = n.f2.accept(this, scope);
+
+        /** changing boolean values to 0 and 1 **/
+        if (expr1.equals("true"))
+            expr1 = "1";
+        else if (expr1.equals("false"))
+            expr1 = "0";
+
+        /** changing boolean values to 0 and 1 **/
+        if (expr2.equals("true"))
+            expr2 = "1";
+        else if (expr2.equals("false"))
+            expr2 = "0";
 
         return output.writeCompareExpr(expr1, expr2);
     }
@@ -553,33 +599,53 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     @Override
     public String visit(MessageSend n, String scope) throws Exception
     {
-        ClassData myClass;
+        String classname;
+        ClassData myClass = null;
         VariableData object = null;
         output.writeString("\n");
 
-        // f0 can be object or classname
+        // f0 can be object, classname or <object_register,classname>
         String objectname = n.f0.accept(this, scope);
 
-        if (objectname.contains("%_")) // is register
+        if (objectname.contains("%_")) // is a register
         {
-
+            classname = objectname.substring(objectname.indexOf(",")+1);
+            objectname = objectname.substring(0, objectname.indexOf(","));
+            myClass = allClasses.searchClass(classname);
         }
-
-        objectname = '%'+objectname;
-
-        // checking if classname
-        myClass = allClasses.searchClass(objectname);
-
-        // checking if object
-        if (myClass == null)
+        else // is object or classname or 'this'
         {
-            // checks if it's an object
-            object = allClasses.findVariable(objectname, scope);
-            assert object != null;
+            objectname = '%'+objectname;
+
+            // checking if this
+            if (objectname.equals("%this"))
+            {
+                if (scope.contains("."))
+                    classname = scope.substring(0, scope.indexOf("."));
+                else
+                    classname = scope;
+
+                myClass = allClasses.searchClass(classname);
+            }
+
+            // checking if classname
+            if (myClass == null)
+                myClass = allClasses.searchClass(objectname);
+
+            // checking if object
+            if (myClass == null)
+            {
+                object = allClasses.findVariable(objectname, scope);
+                assert object != null;
+
+                // loads object
+                objectname = output.writeLoadValue(object, objectname);
+                //output.writeString('\t'+objectPtr+" = load i8*, i8** "+objectname+'\n');
+            }
+            // getting object's class type
+            if (myClass == null)
+                myClass = allClasses.searchClass(object.getType());
         }
-        // getting object's class type
-        if (myClass == null)
-            myClass = allClasses.searchClass(object.getType());
         assert myClass != null;
 
         // f2 can be a method of <myClass>
@@ -594,7 +660,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         else
             method_arguments = "";
 
-        return output.writeMessageSend(objectname, method, method_arguments);
+        return output.writeMessageSend(objectname, method, method_arguments)+","+myClass.getName();
     }
 
     /**
@@ -721,11 +787,11 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     public String visit(AllocationExpression n, String scope) throws Exception
     {
         String id = n.f1.accept(this, scope);
-        //bytes = class offset of fields + 8 for vtable
+
         ClassData aClass = allClasses.searchClass(id);
         assert aClass != null;
 
-        return output.writeObjectAlloc(aClass);
+        return output.writeObjectAlloc(aClass)+","+id;  // returns classname with register
     }
 
     /**
@@ -735,7 +801,15 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     @Override
     public String visit(NotExpression n, String scope) throws Exception
     {
-        return n.f1.accept(this, scope);
+        String expr = n.f1.accept(this, scope);
+
+        /** changing boolean values to 0 and 1 **/
+        if (expr.equals("true"))
+            expr = "1";
+        else if (expr.equals("false"))
+            expr = "0";
+
+        return "!"+expr;
     }
 
     /**
