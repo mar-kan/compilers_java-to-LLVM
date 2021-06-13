@@ -12,7 +12,7 @@ Execution instructions: $ java Main [input files]
 -----------------
 
 Package <symbols> with the classes is almost intact from proj2. Offsets were added inside the classes (for methods and 
-variables.) Also the register counters are stored in methods to continue from there in overriding methods.
+variables.)
 
 Visitor1 was kept almost intact to fill the <symbols>'s classes . Types are now used in the LLVM format (in symbols too).
 

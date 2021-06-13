@@ -9,14 +9,14 @@ import symbols.*;
 
 public class LlvmVisitor extends GJDepthFirst<String, String> {
 
-    private LlvmOutput output;
+    private LlvmOutput translator;
     private AllClasses allClasses;
     private Utils utils = new Utils();
 
 
     public LlvmVisitor(String filename, AllClasses classes) throws IOException
     {
-        output = new LlvmOutput(filename, classes);
+        translator = new LlvmOutput(filename, classes);
         allClasses = classes;
     }
 
@@ -48,7 +48,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         String classname = n.f1.accept(this, "main");
         n.f11.accept(this, argu);
 
-        output.writeString("define i32 @main() {\n");
+        translator.writeString("define i32 @main() {\n");
 
         if (n.f14.present())
             n.f14.accept(this, "main");
@@ -59,7 +59,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         n.f16.accept(this, argu);
         n.f17.accept(this, argu);
 
-        output.writeString("\n\tret i32 0\n}\n");
+        translator.writeString("\n\tret i32 0\n}\n");
         return classname;
     }
 
@@ -139,7 +139,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
             myType = "i8*";
 
         // writes method declaration
-        output.writeMethodDeclaration(classname, myName, myType, args);
+        translator.writeMethodDeclaration(classname, myName, myType, args);
 
         // method content
         n.f7.accept(this, classname+"."+myName);
@@ -151,10 +151,17 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         {
             // loads its ptr
             VariableData var = allClasses.findVariable(return_exp, classname+"."+myName);
-            return_exp = output.writeLoadField(var);
+            return_exp = translator.writeLoadField(var);
 
             // loads its value
-            return_exp = output.writeLoadValue(var, return_exp);
+            return_exp = translator.writeLoadValue(var, return_exp, classname);
+        }
+        else
+        {
+            // loads variable if necessary
+            VariableData var = allClasses.findVariable(return_exp, classname+"."+myName);
+            if (var != null)
+                return_exp = translator.writeLoadValue(var, var.getName(), classname);
         }
 
         // changing boolean values to 0 and 1
@@ -164,7 +171,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
             return_exp = "0";
 
         /** writes method's return expression and closes it **/
-        output.writeString("\n\tret "+myType+" "+return_exp+"\n}\n");
+        translator.writeString("\n\tret "+myType+" "+return_exp+"\n}\n");
 
         return null;
     }
@@ -189,13 +196,13 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
             type = "i8*";
 
         // allocating variable
-        output.writeString("\t"+id+" = alloca "+type+'\n');
+        translator.writeString("\t"+id+" = alloca "+type+'\n');
 
         // initialization for ints and booleans
         if (type.equals("i32") || type.equals("i1"))
-            output.writeString("\tstore "+type+" 0, "+type+"* "+id+"\n");
+            translator.writeString("\tstore "+type+" 0, "+type+"* "+id+"\n");
 
-        output.writeString("\n");
+        translator.writeString("\n");
         return type;
     }
 
@@ -303,17 +310,14 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         String id = '%'+n.f0.accept(this, scope);
         String expr = n.f2.accept(this, scope);
 
-        /** changing boolean values to 0 and 1 **/
-        if (expr.equals("true"))
-            expr = "1";
-        else if (expr.equals("false"))
-            expr = "0";
-
-        // removes class name
+        // removes class name if it is there
         if (expr.contains(","))
             expr = expr.substring(0, expr.indexOf(","));
 
-        output.writeAssignment(id, expr, scope);
+        /** changing boolean values to 0 and 1 **/
+        expr = utils.replaceBoolean(expr);
+
+        translator.writeAssignment(id, expr, scope);
         return id+"="+expr;
     }
 
@@ -329,15 +333,25 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     @Override
     public String visit(ArrayAssignmentStatement n, String scope) throws Exception
     {
-        String id = '%'+n.f0.accept(this, scope);
+        String arrayName = '%'+n.f0.accept(this, scope);
         String index = n.f2.accept(this, scope);
         String expr = n.f5.accept(this, scope);
 
         if (!utils.isIntegerLiteral(expr))
             expr = "%"+expr;
 
-        output.writeArrayAssignment(id, index, expr, scope);
-        return id+"["+index+"]="+expr;
+        VariableData array_var = allClasses.findVariable(arrayName, scope);
+        assert array_var != null;
+
+        // loads it if it's a field
+        if (allClasses.varIsField(arrayName, scope))
+            arrayName = translator.writeLoadField(array_var);
+
+        if (!arrayName.contains("%"))
+            arrayName = '%'+arrayName;
+
+        translator.writeArrayAssignment(arrayName, index, expr, scope);
+        return arrayName+"["+index+"]="+expr;
     }
 
     /**
@@ -353,20 +367,25 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     public String visit(IfStatement n, String scope) throws Exception
     {
         String expr = n.f2.accept(this, scope);
-        if (expr.contains("and"))   // and expressions are printed in
-            return null;
+        if (expr.contains(",")) // removes class name from expr if it exists
+            expr = expr.substring(0, expr.indexOf(","));
 
-        output.writeIfStart(expr);
+        VariableData var = allClasses.findVariable(expr, scope);
+        if (var != null)   // is a variable
+            expr = translator.writeLoadValue(var, expr, scope);
 
-        output.writeIfElseStart();
+        translator.writeIfStart(expr);
+
+        translator.writeIfElseStart();
         String else_expr = n.f6.accept(this, scope);
-        output.goToIfEnd();
+        translator.goToIfEnd();
 
-        output.writeIfThenStart();
+        translator.writeIfThenStart();
         String then_expr = n.f4.accept(this, scope);
-        output.goToIfEnd();
+        translator.goToIfEnd();
 
-        output.writeIfEnd();
+        translator.writeIfEnd();
+
         return null;
     }
 
@@ -381,21 +400,12 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     public String visit(WhileStatement n, String scope) throws Exception
     {
         String expr = n.f2.accept(this, scope);
+        if (expr.contains(","))
+            expr = expr.substring(0, expr.indexOf(","));
 
-        /*output.writeString("\tstore i32 0, i32* %count\n\tbr label %loopstart_"+while_num+"\n\n" +
-                "\tloopstart_"+while_num+":\n"+
-                "\t% = load i32, i32* %count\n"+
-                "\t%fin = icmp "+expr+'\n'+
-                "\tbr i1 %fin, label %next_"+while_num+", label %end_"+while_num+"\n\n"+
-                "\tnext_"+while_num+":\n");
-
+        int while_num = translator.writeWhileStatementStart(expr, allClasses.findVariable(expr, scope));
         n.f4.accept(this, scope);
-
-
-        output.writeString("\tnext_i = add i32 %i, 1\n\tstore i32 %next_i, i32* %count\n"+
-                "\tbr label %loopstart_"+while_num+"\n\n"+
-                "\tend_"+(while_num++)+":\n\tret i32 0\n\n");
-*/
+        translator.writeWhileStatementEnd(while_num);
         return null;
     }
 
@@ -410,11 +420,13 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     public String visit(PrintStatement n, String scope) throws Exception
     {
         String expr = n.f2.accept(this, scope);
+        if (expr.contains(","))
+            expr = expr.substring(0, expr.indexOf(","));
 
         if (expr.contains(",")) // removes classname
             expr = expr.substring(0,expr.indexOf(","));
 
-        output.writePrintStatement(expr);
+        translator.writePrintStatement(expr, scope);
         return null;
     }
 
@@ -450,37 +462,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         String expr1 = n.f0.accept(this, scope);
         String expr2 = n.f2.accept(this, scope);
 
-        /** changing boolean values to 0 and 1 **/
-        if (expr1.equals("true"))
-            expr1 = "1";
-        else if (expr1.equals("false"))
-            expr1 = "0";
-
-        /** changing boolean values to 0 and 1 **/
-        if (expr2.equals("true"))
-            expr2 = "1";
-        else if (expr2.equals("false"))
-            expr2 = "0";
-
-        /*if (!utils.isBooleanLiteral(expr1))
-        {
-            output.writeString("\t%_"+reg_num+" = load i1, i1* %"+expr1+'\n');
-            expr1 = "%_"+reg_num++;
-        }
-
-        output.writeString("\tbr i1 %_"+(reg_num-1)+", label %exp_res_"+(and_num+1)+", label %exp_res_"+and_num+"\n\n"+
-                "\texp_res_"+(and_num++)+":\n\tbr label %exp_res_"+(and_num+2)+"\n\n"+
-                "\texp_res_"+and_num+":\n");
-
-        if (!utils.isBooleanLiteral(expr2))
-        {
-            output.writeString("\t%_"+reg_num+" = load i1, i1* %"+expr2+'\n');
-            expr2 = "%_"+reg_num++;
-        }
-        output.writeString("\tbr label %exp_res_"+(++and_num)+"\n\n"+
-                "\texp_res_"+(and_num++)+":\n\tbr label %exp_res_"+and_num+"\n");
-*/
-        return expr1+" and "+expr2;
+        return translator.writeAndExpression(expr1, expr2, scope);
     }
 
     /**
@@ -506,7 +488,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         else if (expr2.equals("false"))
             expr2 = "0";
 
-        return output.writeCompareExpr(expr1, expr2);
+        return translator.writeCompareExpr(expr1, expr2, scope);
     }
 
     /**
@@ -520,7 +502,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         String expr1 = n.f0.accept(this, scope);
         String expr2 = n.f2.accept(this, scope);
 
-        return output.writeArithmeticOperation(expr1, expr2, '+', scope);
+        return translator.writeArithmeticOperation(expr1, expr2, "and", scope);
     }
 
     /**
@@ -534,7 +516,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         String expr1 = n.f0.accept(this, scope);
         String expr2 = n.f2.accept(this, scope);
 
-        return output.writeArithmeticOperation(expr1, expr2, '-', scope);
+        return translator.writeArithmeticOperation(expr1, expr2, "sub", scope);
     }
 
     /**
@@ -548,7 +530,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         String expr1 = n.f0.accept(this, scope);
         String expr2 = n.f2.accept(this, scope);
 
-        return output.writeArithmeticOperation(expr1, expr2, '*', scope);
+        return translator.writeArithmeticOperation(expr1, expr2, "mul", scope);
     }
 
     /**
@@ -563,7 +545,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         String arrayName = n.f0.accept(this, scope);
         String index = n.f2.accept(this, scope);
 
-        return output.writeArrayLookup(arrayName, index);
+        return translator.writeArrayLookup(arrayName, index, scope);
     }
 
     /**
@@ -575,17 +557,13 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     public String visit(ArrayLength n, String scope) throws Exception
     {
         String arrayName = n.f0.accept(this, scope);
+        n.f1.accept(this, scope);
+        n.f2.accept(this, scope);
+
         if (arrayName.equals("int[]"))  // covers methods returning arrays
             return "int[]";
 
-        VariableData array = null;
-        /*if (array != null)
-        {
-            /** array is a field **
-            if (varIsField(var, scope))
-                id = loadField(var);
-        }*/
-        return "int";
+        return translator.writeArrayLength(arrayName);
     }
 
     /**
@@ -602,11 +580,10 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         String classname;
         ClassData myClass = null;
         VariableData object = null;
-        output.writeString("\n");
+        translator.writeString("\n");
 
         // f0 can be object, classname or <object_register,classname>
         String objectname = n.f0.accept(this, scope);
-
         if (objectname.contains("%_")) // is a register
         {
             classname = objectname.substring(objectname.indexOf(",")+1);
@@ -615,8 +592,6 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         }
         else // is object or classname or 'this'
         {
-            objectname = '%'+objectname;
-
             // checking if this
             if (objectname.equals("%this"))
             {
@@ -627,6 +602,8 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
 
                 myClass = allClasses.searchClass(classname);
             }
+            else
+                objectname = '%'+objectname;
 
             // checking if classname
             if (myClass == null)
@@ -639,8 +616,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
                 assert object != null;
 
                 // loads object
-                objectname = output.writeLoadValue(object, objectname);
-                //output.writeString('\t'+objectPtr+" = load i8*, i8** "+objectname+'\n');
+                objectname = translator.writeLoadValue(object, objectname, scope);
             }
             // getting object's class type
             if (myClass == null)
@@ -660,7 +636,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         else
             method_arguments = "";
 
-        return output.writeMessageSend(objectname, method, method_arguments)+","+myClass.getName();
+        return translator.writeMessageSend(objectname, method, method_arguments, myClass.getName())+","+myClass.getName();
     }
 
     /**
@@ -752,7 +728,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     @Override
     public String visit(ThisExpression n, String scope) throws Exception
     {
-        return "this";
+        return "%this";
     }
 
     /**
@@ -774,7 +750,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
             size = String.valueOf(var.getValue());
         }
 
-        return output.writeArrayAlloc(size);
+        return translator.writeArrayAlloc(size);
     }
 
     /**
@@ -791,7 +767,7 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
         ClassData aClass = allClasses.searchClass(id);
         assert aClass != null;
 
-        return output.writeObjectAlloc(aClass)+","+id;  // returns classname with register
+        return translator.writeObjectAlloc(aClass)+","+id;  // returns classname with register
     }
 
     /**
@@ -802,14 +778,10 @@ public class LlvmVisitor extends GJDepthFirst<String, String> {
     public String visit(NotExpression n, String scope) throws Exception
     {
         String expr = n.f1.accept(this, scope);
+        if (expr.contains(","))
+            expr = expr.substring(0, expr.indexOf(","));
 
-        /** changing boolean values to 0 and 1 **/
-        if (expr.equals("true"))
-            expr = "1";
-        else if (expr.equals("false"))
-            expr = "0";
-
-        return "!"+expr;
+        return translator.writeNotExpr(expr, scope);
     }
 
     /**

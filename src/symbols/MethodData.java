@@ -11,7 +11,6 @@ public class MethodData {
 
     private boolean overriding = false;
     private boolean overridden = false;
-    private int myRegCount = 0;
 
     private LinkedList<VariableData> arguments = new LinkedList<>();
     private LinkedList<VariableData> variables = new LinkedList<>();
@@ -126,15 +125,5 @@ public class MethodData {
     public boolean isOverridden()
     {
         return overridden;
-    }
-
-    public void setMyRegCount(int myRegCount)
-    {
-        this.myRegCount = myRegCount;
-    }
-
-    public int getMyRegCount()
-    {
-        return myRegCount;
     }
 }

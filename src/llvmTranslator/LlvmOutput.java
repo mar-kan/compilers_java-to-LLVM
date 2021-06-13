@@ -14,12 +14,12 @@ public class LlvmOutput {
     private AllClasses allClasses;
     private Utils utils = new Utils();
 
-    private int reg_num=0;
-    private int if_num=0;
-    private int while_num=0;
-    private int oob_num=0;
-    private int nsz_num=0;
-    private int and_num=0;
+    private int var_reg=0;
+    private int if_reg=0;
+    private int while_reg=0;
+    private int oob_reg=0;
+    private int nsz_reg=0;
+    private int and_reg=0;
 
 
     public LlvmOutput(String filename, AllClasses allClasses) throws IOException
@@ -41,7 +41,7 @@ public class LlvmOutput {
         writer.close();
     }
 
-    /** writes boilerplate **/
+    /** writes the boilerplate **/
     public void writeBoilerplate() throws IOException
     {
         this.writeString("declare i8* @calloc(i32, i32)\n" +
@@ -82,9 +82,9 @@ public class LlvmOutput {
         for (int i=allClasses.getClasses().size()-1; i>=0; i--) // printing classes in reverse
         {
             ClassData aClass = allClasses.getClasses().get(i);
-            int method_count = aClass.getMethodSizeWithExtending();
+            int method_num = aClass.getMethodSizeWithExtending();
 
-            writer.write("@."+aClass.getName()+"_vtable = global ["+method_count+" x i8*] ["); // writes class vtable
+            writer.write("@."+aClass.getName()+"_vtable = global ["+method_num+" x i8*] ["); // writes class vtable
             writer.flush();
             writer.close();
             boolean wrote = writeClassMethodsInVtable(aClass, false, false);                  // writes all its methods
@@ -120,10 +120,7 @@ public class LlvmOutput {
             else
                 writer.write('\n');
 
-            String type = method.getType();
-            if (!type.equals("i32") && !type.equals("i32*") && !type.equals("i1"))
-                type = "i8*";
-
+            String type = changeClassType(method.getType());
             writer.write("\ti8* bitcast ("+type+" (i8*");
             wrote = true;
 
@@ -131,9 +128,7 @@ public class LlvmOutput {
             {
                 for (VariableData argument : method.getArguments())
                 {
-                    type = argument.getType();
-                    if (!type.equals("i32") && !type.equals("i32*") && !type.equals("i1"))
-                        type = "i8*";
+                    type = changeClassType(argument.getType());
                     writer.write(", "+type);
                 }
             }
@@ -145,12 +140,10 @@ public class LlvmOutput {
         return wrote;   // returns if anything was written in the file
     }
 
-    /** writes a method declaration **/
+    /** translates a method declarations **/
     public void writeMethodDeclaration(String classname, String methodName, String methodType, String args) throws IOException
     {
-        // finds method and gets its register count
-        MethodData myMethod = allClasses.searchClass(classname).searchMethod(methodName);
-        reg_num = myMethod.getMyRegCount();
+        this.resetAllRegisters(); // sets all registers to 0 for each scope
 
         // writing method declaration
         if (args == null)
@@ -169,12 +162,9 @@ public class LlvmOutput {
                         "\tstore "+split_args[i-1]+" "+split_args[i]+", "+split_args[i-1]+"* %"+split_args[i].substring(split_args[i].indexOf(".")+1)+"\n\n");
             }
         }
-
-        // sets method's reg_count
-        myMethod.setMyRegCount(reg_num);  // sets it to the 1st unused reg_num
     }
 
-    /** writes assignment expressions **/
+    /** translates assignment expressions **/
     public void writeAssignment(String id, String expr, String scope) throws IOException
     {
         // finding variable of id
@@ -182,40 +172,37 @@ public class LlvmOutput {
         assert var != null;
 
         /** expr is a variable **/
-        VariableData variable = allClasses.findVariable("%"+expr, scope);
-        if (variable != null)
+        VariableData expr_var = allClasses.findVariable("%"+expr, scope);
+        if (expr_var != null)
         {
-            // loading expr
-            if (var.getType().equals("i32") || var.getType().contains("i32") || var.getType().equals("i1"))
-                this.writeString("\t%_"+reg_num+++" = load "+variable.getType()+", "+variable.getType()+"* %"+expr+'\n');
-            else
-                this.writeString("\t%_"+reg_num+++" = load i8*, i8** %"+expr+'\n');
-
-            expr = "%_"+(reg_num-1);
+            expr = this.writeLoadValue(expr_var, expr, scope);
+            var.setValue(expr_var.getValue());  // changes value of id's var
         }
+        else if (!expr.contains("%_"))
+            var.setValue(expr);
 
         /** var is a field **/
         if (allClasses.varIsField(var.getName(), scope))
             id = this.writeLoadField(var);
 
         // assignment
-        if (var.getType().equals("i32") || var.getType().contains("i32") || var.getType().equals("i1"))
+        if (var.getType().equals("i32") || var.getType().equals("i32*") || var.getType().equals("i1"))
             this.writeString("\tstore "+var.getType()+" "+expr+", "+var.getType()+"* "+id+'\n');
         else
             this.writeString("\tstore i8* "+expr+", i8** "+id+'\n');
     }
 
-    /** writes array assignment **/
+    /** translates array assignments **/
     public void writeArrayAssignment(String arrayName, String index, String expr, String scope) throws IOException
     {
-        String array_address = "%_"+reg_num++;  // stores the address of the array
+        String array_address = "%_"+var_reg++;  // stores the address of the array
         this.writeString("\t"+array_address+" = load i32*, i32** "+arrayName+"\n"+
-                "\t%_"+(reg_num++)+" = load i32, i32* %_"+(reg_num-2)+"\n");
+                "\t%_"+(var_reg++)+" = load i32, i32* %_"+(var_reg-2)+"\n");
 
-        this.writeOobCheck(index);
+        this.writeOobCheck(index, scope);
 
         // index takes its literal value if it is a variable
-        if (!utils.isIntegerLiteral(index))
+        if (!utils.isIntegerLiteral(index) && !index.contains("%_"))
         {
             VariableData var = allClasses.findVariable(index, scope);
             assert var != null;
@@ -224,202 +211,306 @@ public class LlvmOutput {
         }
 
         // finds index and stores expr in id[index]
-        this.writeString("\t%_"+(reg_num++)+" = add i32 1, "+index+"\n"+
-                "\t%_"+(reg_num++)+" = getelementptr i32, i32* "+array_address+", i32 %_"+(reg_num-2)+'\n'+
-                "\tstore i32 "+(Integer.parseInt(index)+1)+", i32* %_"+(reg_num-1)+"\n\n");
+        this.writeString("\t%_"+(var_reg++)+" = add i32 1, "+index+"\n"+
+                "\t%_"+(var_reg++)+" = getelementptr i32, i32* "+array_address+", i32 %_"+(var_reg-2)+'\n'+
+                "\tstore i32 "+(Integer.parseInt(index)+1)+", i32* %_"+(var_reg-1)+"\n\n");
     }
 
     /** writes the check for oob errors of index **/
-    public void writeOobCheck(String index) throws IOException
+    public String writeOobCheck(String index, String scope) throws IOException
     {
+        // loads index var if it is a variable
+        index = writeLoadValue(index, scope);
+
         // checks index for errors
-        this.writeString("\t%_"+(reg_num++)+" = icmp sge i32 "+index+", 0\n"+
-                "\t%_"+(reg_num++)+" = icmp slt i32 "+index+", %_"+(reg_num-3)+'\n'+
-                "\t%_"+(reg_num++)+" = and i1 %_"+(reg_num-3)+", %_"+(reg_num-2)+'\n'+
-                "\tbr i1 %_"+(reg_num-1)+", label %oob_ok_"+oob_num+", label %oob_err_"+oob_num+"\n\n"+
-                "\toob_err_"+oob_num+":\n\tcall void @throw_oob()\n"+
-                "\tbr label %oob_ok_"+oob_num+"\n\n\toob_ok_"+(oob_num++)+":\n");
+        this.writeString("\t%_"+(var_reg++)+" = icmp sge i32 "+index+", 0\n"+
+                "\t%_"+(var_reg++)+" = icmp slt i32 "+index+", %_"+(var_reg-3)+'\n'+
+                "\t%_"+(var_reg++)+" = and i1 %_"+(var_reg-3)+", %_"+(var_reg-2)+'\n'+
+                "\tbr i1 %_"+(var_reg-1)+", label %oob_ok_"+oob_reg+", label %oob_err_"+oob_reg+"\n\n"+
+                "\toob_err_"+oob_reg+":\n" +
+                "\tcall void @throw_oob()\n"+
+                "\tbr label %oob_ok_"+oob_reg+"\n\n" +
+                "\toob_ok_"+(oob_reg++)+":\n");
+
+        return index;
     }
 
-    /** writes an if statement **/
+    /** translates an if statement **/
     public void writeIfStart(String expr) throws IOException
     {
-        this.writeString("\tbr i1 "+expr+", label %if_then_"+if_num+", label %if_else_"+if_num+"\n\n");
+        this.writeString("\tbr i1 "+expr+", label %if_then_"+if_reg+", label %if_else_"+if_reg+"\n\n");
     }
 
     /** writes then part of the if **/
     public void writeIfThenStart() throws IOException
     {
-        this.writeString("\tif_then_"+if_num+":\n");
+        this.writeString("\tif_then_"+if_reg+":\n");
     }
 
     /** writes else part of the if **/
     public void writeIfElseStart() throws IOException
     {
-        this.writeString("\tif_else_"+if_num+":\n");
+        this.writeString("\tif_else_"+if_reg+":\n");
     }
 
     /** writes closing of the if **/
     public void goToIfEnd() throws IOException
     {
-        this.writeString("\tbr label %if_end_"+if_num+"\n\n");
+        this.writeString("\tbr label %if_end_"+if_reg+"\n\n");
     }
 
     public void writeIfEnd() throws IOException
     {
-        this.writeString("\tif_end_"+(if_num++)+":\n");
+        this.writeString("\tif_end_"+(if_reg++)+":\n");
     }
 
-    /** writes print statement **/
-    public void writePrintStatement(String expr) throws IOException
+    /** translates an and expression **/
+    public String writeAndExpression(String expr1, String expr2, String scope) throws IOException
     {
-        if (!utils.isIntegerLiteral(expr) && !expr.contains("%_"))
+        /** loading expr1's value if necessary */
+        expr1 = this.writeLoadValue(expr1, scope);
+        /** changing literal boolean values to 0 or 1 **/
+        expr1 = utils.replaceBoolean(expr1);
+
+        int label1_num = and_reg;
+        this.writeString("\tbr i1 "+expr1+", label %exp_res_"+(label1_num+1)+", label %exp_res_"+label1_num+"\n\n"+
+                "\texp_res_"+(and_reg++)+":\n" +
+                "\tbr label %exp_res_"+(and_reg+2)+"\n\n"+
+                "\texp_res_"+and_reg+":\n");
+
+        /** loading expr2's var if necessary */
+        expr2 = this.writeLoadValue(expr2, scope);
+        /** changing literal boolean values to 0 or 1 **/
+        expr2 = utils.replaceBoolean(expr2);
+
+        this.writeString("\tbr label %exp_res_"+(++and_reg)+"\n\n"+
+                "\texp_res_"+(and_reg++)+":\n"+
+                "\tbr label %exp_res_"+and_reg+"\n\n" +
+                "\texp_res_"+and_reg+++":\n"+
+                "\t%_"+var_reg+" = phi i1 [ 0, %exp_res_"+label1_num+" ], [ "+expr2+", %exp_res_"+(label1_num+2)+" ]\n"
+                );
+
+        return "%_"+var_reg++;
+    }
+
+    /** translates 1st part of while statements **/
+    public int writeWhileStatementStart(String expr, VariableData expr_var) throws IOException
+    {
+        int while_num = while_reg++;
+        this.writeString("\tbr label %loop_start_"+while_num+"\n\n" +
+                "\tloop_start_"+while_num+":\n");
+
+        if (expr_var != null)   // is a variable
         {
-            this.writeString("\t%_"+reg_num+" = load i32, i32* %"+expr+"\n"); // loads variable
-            expr = "%_"+reg_num++;
+            // loads it
+
+            if (!expr.contains("%"))
+                expr = "%"+expr;
+
+            String type = changeClassType(expr_var.getType());
+            this.writeString("\t%_"+var_reg+++" = load "+type+", "+type+"* "+expr+"\n");
+            expr = "%_"+(var_reg-1);
         }
 
+        this.writeString("\tbr i1 "+expr+", label %loop_next_"+while_num+", label %loop_end_"+while_num+'\n'+
+                "\tloop_next_"+while_num+":\n");
+
+        return while_num;
+    }
+
+    /** writes next part of the while statement **/
+    public void writeWhileStatementEnd(int while_num) throws IOException
+    {
+        this.writeString("\tbr label %loop_start_"+while_num+"\n\n"+
+                "\tloop_end_"+while_num+":\n");
+    }
+
+    /** translates print statements **/
+    public void writePrintStatement(String expr, String scope) throws IOException
+    {
+        /** loads first if necessary **/
+        expr = this.writeLoadValue(expr, scope);
+
+        /** prints expr **/
         this.writeString("\tcall void (i32) @print_int(i32 "+expr+")\n");
     }
 
-    /** writes compare expressions **/
-    public String writeCompareExpr(String expr1, String expr2) throws IOException
+    /** translates compare expressions **/
+    public String writeCompareExpr(String expr1, String expr2, String scope) throws IOException
     {
-        if (!utils.isIntegerLiteral(expr1))
-        {
-            expr1 = "%"+expr1;
-            this.writeString("\t%_"+reg_num+" = load i32, i32* "+expr1+'\n');
-            expr1 = "%_"+reg_num++;
-        }
+        // loads values first if they are variables
+        expr1 = this.writeLoadValue(expr1, scope);
+        expr2 = this.writeLoadValue(expr2, scope);
 
-        if (!utils.isIntegerLiteral(expr2))
-        {
-            expr2 = "%"+expr2;
-            this.writeString("\t%_"+(reg_num++)+" = load i32, i32* "+expr2+'\n');
-            expr2 = "%_"+reg_num++;
-        }
-        String expr_reg = String.valueOf(reg_num++);
-        this.writeString("\t%_"+expr_reg+" = icmp slt i32 "+expr1+", "+expr2+'\n');
+        String expr_reg = "%_"+var_reg++;
+        this.writeString("\t"+expr_reg+" = icmp slt i32 "+expr1+", "+expr2+'\n');
 
-        return "%_"+expr_reg;
+        return expr_reg;
     }
 
-    /** writes arithmetical operations **/
-    public String writeArithmeticOperation(String expr1, String expr2, int op, String scope) throws Exception
+    /** translates all arithmetical operations **/
+    public String writeArithmeticOperation(String expr1, String expr2, String operation, String scope) throws Exception
     {
-        VariableData var1 = allClasses.findVariable(expr1, scope);
-        VariableData var2 = allClasses.findVariable(expr2, scope);
+        // removes classnames if there are any
+        if (expr1.contains(","))
+            expr1 = expr1.substring(0, expr1.indexOf(","));
+        if (expr2.contains(","))
+            expr2 = expr2.substring(0, expr2.indexOf(","));
 
-        if (var1 != null)
-        {
-            this.writeString("\t%_"+reg_num+" = load i32, i32* "+var1.getName()+"\n");
-            expr1 = "%_"+reg_num++;
-        }
-        ;
-        if (var2 != null)
-        {
-            this.writeString("\t%_"+reg_num+" = load i32, i32* "+var2.getName()+"\n");
-            expr2 = "%_"+reg_num++;
-        }
+        // loads values first if they are variables
+        expr1 = this.writeLoadValue(expr1, scope);
+        expr2 = this.writeLoadValue(expr2, scope);
 
-        if (op=='+')
-            this.writeString("\t%_"+reg_num+" = add i32 "+expr1+", "+expr2+"\n");
-        else if (op=='-')
-            this.writeString("\t%_"+reg_num+" = sub i32 "+expr1+", "+expr2+"\n");
-        else if (op=='*')
-            this.writeString("\t%_"+reg_num+" = mul i32 "+expr1+", "+expr2+"\n");
-        else if (op=='&')
-            this.writeString("\t%_"+reg_num+" = and i32 "+expr1+", "+expr2+"\n");
-        else
-            throw new Exception("Wrong op");
+        /** writes operation **/
+        this.writeString("\t%_"+var_reg+" = "+operation+" i32 "+expr1+", "+expr2+"\n");
 
-        return "%_"+reg_num++;    // returns the register of the result
+        return "%_"+var_reg++;    // returns the register of the result
+    }
+    
+    /** translates not expression **/
+    public String writeNotExpr(String expr, String scope) throws IOException
+    {
+        // loads values first if expr is a variables
+        expr = this.writeLoadValue(expr, scope);
+
+        /** changing boolean values to 0 and 1 **/
+        if (expr.equals("true"))
+            expr = "1";
+        else if (expr.equals("false"))
+            expr = "0";
+
+        /** performs not with a xor with 1 **/
+        this.writeString("\t%_"+var_reg+" = xor i1 1, "+expr+"\n");
+        return "%_"+var_reg++;
     }
 
-    /** writes array lookup **/
-    public String writeArrayLookup(String arrayName, String index) throws IOException
+    /** translates array lookup **/
+    public String writeArrayLookup(String arrayName, String index, String scope) throws IOException
     {
-        String array_reg = "%_"+reg_num++;
+        VariableData array_var = allClasses.findVariable(arrayName, scope);
+        assert array_var != null;
 
-        this.writeString("\t"+array_reg+" = load i32*, i32** %"+arrayName+"\n" +
-                "\t%_"+reg_num+++" = load i32, i32* %_"+(reg_num-2)+"\n");
+        // loads it if it's a field
+        if (allClasses.varIsField(arrayName, scope))
+            arrayName = this.writeLoadField(array_var);
 
-        this.writeOobCheck(index);
+        if (!arrayName.contains("%"))
+            arrayName = '%'+arrayName;
 
-        this.writeString("\t%_"+reg_num+++" = add i32 1, "+index+"\n" +
-                "\t%_"+reg_num+++" = getelementptr i32, i32* "+array_reg+", i32 %_"+(reg_num-2)+"\n" +
-                "\t%_"+reg_num+" = load i32, i32* %_"+(reg_num-1)+"\n\n");
+        String array_reg = "%_"+var_reg++;
+        this.writeString("\t"+array_reg+" = load i32*, i32** "+arrayName+"\n" +
+                "\t%_"+var_reg+++" = load i32, i32* %_"+(var_reg-2)+"\n");
 
-        return "%_"+reg_num++;
+        index = this.writeOobCheck(index, scope);
+
+        // loads index if it is a variable
+        index = this.writeLoadValue(index, scope);
+
+        this.writeString("\t%_"+var_reg+++" = add i32 1, "+index+"\n" +
+                "\t%_"+var_reg+++" = getelementptr i32, i32* "+array_reg+", i32 %_"+(var_reg-2)+"\n" +
+                "\t%_"+var_reg+" = load i32, i32* %_"+(var_reg-1)+"\n\n");
+
+        return "%_"+var_reg++;
+    }
+    
+    /** translates array length **/
+    public String writeArrayLength(String arrayName) throws IOException
+    {
+        this.writeString("\t"+var_reg+" = load i32, i32* "+arrayName+"\n");
+        return "%_"+var_reg++;
     }
 
-    /** writes method calls **/
-    public String writeMessageSend(String objectPtr, MethodData method, String args) throws IOException
+    /** translates method calls **/
+    public String writeMessageSend(String objectPtr, MethodData method, String args, String classname) throws IOException
     {
-        this.writeString("\t%_"+reg_num+++" = bitcast i8* "+objectPtr+" to i8***\n"+
-                "\t%_"+reg_num+++" = load i8**, i8*** %_"+(reg_num-2)+'\n'+
-                "\t%_"+reg_num+++" = getelementptr i8*, i8** %_"+(reg_num-2)+", i32 "+method.getOffset()+"\n"+
-                "\t%_"+reg_num+++" = load i8*, i8** %_"+(reg_num-2)+'\n');
+        this.writeString("\t%_"+var_reg+++" = bitcast i8* "+objectPtr+" to i8***\n"+
+                "\t%_"+var_reg+++" = load i8**, i8*** %_"+(var_reg-2)+'\n'+
+                "\t%_"+var_reg+++" = getelementptr i8*, i8** %_"+(var_reg-2)+", i32 "+method.getOffset()/8+"\n"+
+                "\t%_"+var_reg+" = load i8*, i8** %_"+(var_reg-1)+'\n');
 
-        this.writeString("\t%_"+reg_num+++" = bitcast i8* %_"+(reg_num-2)+" to "+method.getType()+" (i8*");
+        String load_reg = "%_"+var_reg++;
+        String type = changeClassType(method.getType());
 
         if (args.equals(""))
-            this.writeString(")*\n\t%_"+reg_num+++" = call "+method.getType()+" %_"+(reg_num-2)+"(i8* "+objectPtr+")\n");
+            this.writeString("\t%_"+var_reg+++" = bitcast i8* %_"+(var_reg-2)+" to "+type+" (i8*)*\n" +
+                    "\t%_"+var_reg+++" = call "+type+" %_"+(var_reg-2)+"(i8* "+objectPtr+")\n");
         else
         {
             String[] split_args = args.split(" ");
-            StringBuilder decl_args = new StringBuilder();
+            StringBuilder types_args = new StringBuilder();
             StringBuilder call_args = new StringBuilder();
             for (int i=0; i<split_args.length; i++)
             {
                 if (split_args[i].contains(","))    // removes commas
                     split_args[i] = split_args[i].substring(0, split_args[i].indexOf(","));
 
-                if (!call_args.toString().equals(""))
-                    call_args.append(", ");
-                call_args.append(method.getArguments().get(i).getType()).append(" ").append(split_args[i]);
+                String arg_type = changeClassType(method.getArguments().get(i).getType());
 
-                if (!decl_args.toString().equals(""))
-                    decl_args.append(",");
-                decl_args.append(method.getArguments().get(i).getType());
+                /** loads any argument necessary **/
+                if (!split_args[i].contains("%") && !utils.isBooleanLiteral(split_args[i]) && !utils.isIntegerLiteral(split_args[i]))
+                {
+                    if (allClasses.varIsField(split_args[i], classname+"."+method.getName()))
+                        split_args[i] = writeLoadField(allClasses.findVariable(split_args[i], classname+"."+method.getName()));
+
+                    if (!split_args[i].contains("%"))
+                        split_args[i] = '%'+split_args[i];
+
+                    this.writeString("\t%_"+var_reg+" = load "+arg_type+", "+arg_type+"* "+split_args[i]+'\n');
+                    split_args[i] = "%_"+var_reg++;
+                }
+
+                /** builds a string of args (with types) for the method call **/
+                if (!call_args.toString().equals(""))
+                    call_args.append(",");
+                call_args.append(arg_type).append(" ").append(split_args[i]);
+
+                /** builds a string of types of args for the method types **/
+                if (!types_args.toString().equals(""))
+                    types_args.append(",");
+                types_args.append(arg_type);
             }
-            this.writeString(","+decl_args+")*\n\t%_"+reg_num+++" = call "+method.getType()+" %_"+(reg_num-2)+"(i8* "+
-                    objectPtr+", "+call_args+")\n");
+
+            type = changeClassType(method.getType());
+            this.writeString("\t%_"+var_reg+++" = bitcast i8* "+load_reg+" to "+type+" (i8*,"+types_args+")*\n" +
+                    "\t%_"+var_reg+++" = call "+type+" %_"+(var_reg-2)+"(i8* "+objectPtr+", "+call_args+")\n");
         }
-        return "%_"+(reg_num-1);    // returns call receiver register
+        return "%_"+(var_reg-1);    // returns call receiver register
     }
 
-    /** writes array allocations **/
+    /** translates array allocations **/
     public String writeArrayAlloc(String size) throws IOException
     {
-        this.writeString("\t%_"+(reg_num++)+" = add i32 1, "+ size+'\n');
+        this.writeString("\t%_"+(var_reg++)+" = add i32 1, "+ size+'\n');
 
         // check that size is >= 1
-        this.writeString("\t%_"+reg_num+++" = icmp sge i32 %_"+(reg_num-2)+", 1\n\tbr i1 %_"+(reg_num-1)+
-                ", label %nsz_ok_"+nsz_num+", label %nsz_err_"+nsz_num+"\n\n\tnsz_err_"+nsz_num+":\n"+
-                "\tcall void @throw_nsz()\n\tbr label %nsz_ok_"+if_num+"\n\n\tnsz_ok_"+(nsz_num++)+":\n");
+        this.writeString("\t%_"+var_reg+++" = icmp sge i32 %_"+(var_reg-2)+", 1\n" +
+                "\tbr i1 %_"+(var_reg-1)+", label %nsz_ok_"+nsz_reg+", label %nsz_err_"+nsz_reg+"\n\n" +
+                "\tnsz_err_"+nsz_reg+":\n"+
+                "\tcall void @throw_nsz()\n" +
+                "\tbr label %nsz_ok_"+if_reg+"\n\n" +
+                "\tnsz_ok_"+(nsz_reg++)+":\n");
 
         // allocation
-        this.writeString("\t%_"+(reg_num++)+" = call i8* @calloc(i32 %_"+(reg_num-3)+", i32 4)\n"+
-                "\t%_"+(reg_num++)+" = bitcast i8* %_"+(reg_num-2)+" to i32*\n\t" +
-                "store i32 2, i32* %_"+(reg_num-1)+"\n\n");
+        this.writeString("\t%_"+(var_reg++)+" = call i8* @calloc(i32 %_"+(var_reg-3)+", i32 4)\n"+
+                "\t%_"+(var_reg++)+" = bitcast i8* %_"+(var_reg-2)+" to i32*\n\t" +
+                "store i32 2, i32* %_"+(var_reg-1)+"\n\n");
 
-        return "%_"+(reg_num - 1);  // returns register of ptr to array
+        return "%_"+(var_reg - 1);  // returns register of ptr to array
     }
 
-    /** writes object allocations **/
+    /** translates object allocations **/
     public String writeObjectAlloc(ClassData aClass) throws IOException
     {
         int bytes = 8 /* v-table */ + aClass.getField_offsets() /* offsets including last field's*/;
-        int object_reg = reg_num++;
+        int object_reg = var_reg++;
         this.writeString("\t%_"+object_reg+" = call i8* @calloc(i32 1, i32 "+bytes+")\n");
 
-        int method_count = aClass.getMethodSizeWithExtending();
+        int method_num = aClass.getMethodSizeWithExtending();
 
-        String vtablePtr = "%_"+reg_num++;
-        this.writeString("\t"+vtablePtr+" = bitcast i8* %_"+(reg_num-2)+" to i8***\n"+
-                "\t%_"+reg_num+" = getelementptr ["+method_count+" x i8*], ["+method_count+" x i8*]* @."+aClass.getName()+"_vtable, i32 0, i32 0\n"+
-                "\tstore i8** %_"+(reg_num++)+", i8*** "+vtablePtr+"\n");
+        String vtablePtr = "%_"+var_reg++;
+        this.writeString("\t"+vtablePtr+" = bitcast i8* %_"+(var_reg-2)+" to i8***\n"+
+                "\t%_"+var_reg+" = getelementptr ["+method_num+" x i8*], ["+method_num+" x i8*]* @."+aClass.getName()+"_vtable, i32 0, i32 0\n"+
+                "\tstore i8** %_"+(var_reg++)+", i8*** "+vtablePtr+"\n");
 
         return "%_"+object_reg; // returns register of ptr to object
     }
@@ -428,31 +519,67 @@ public class LlvmOutput {
     /** writes the instructions required to load a field in a register before using it **/
     public String writeLoadField(VariableData var) throws IOException
     {
-        String type;
-        if (var.getType().equals("i1") || var.getType().equals("i32") || var.getType().contains("i32"))
-            type = var.getType();   // keeps field type
-        else
-            type = "i8*";   // converts field(object) type to i8*
+        String type = changeClassType(var.getType());
 
-        this.writeString("\t%_"+reg_num+++" = getelementptr i8, i8* %this, "+type+" "+(var.getOffset()+8)+"\n"
-                +"\t%_"+reg_num+++" = bitcast i8* %_"+(reg_num-2)+" to "+type+"*\n");
+        this.writeString("\t%_"+var_reg+++" = getelementptr i8, i8* %this, i32 "+(var.getOffset()+8)+"\n"
+                +"\t%_"+var_reg+++" = bitcast i8* %_"+(var_reg-2)+" to "+type+"*\n");
 
-        return "%_"+(reg_num-1);  // returns the num of register of ptr to this->var
+        return "%_"+(var_reg-1);  // returns the num of register of ptr to this->var
     }
 
-    /** writes the load of a variable's value **/
-    public String writeLoadValue(VariableData var, String load_name) throws IOException
+    /** writes the load of a variable's value depending on the var object. it always loads **/
+    public String writeLoadValue(VariableData var, String load_name, String scope) throws IOException
     {
-        String type;
-        if (var.getType().equals("i1") || var.getType().equals("i32") || var.getType().contains("i32"))
-            type = var.getType();   // keeps field type
-        else
-            type = "i8*";   // converts field(object) type to i8*
+        String type = changeClassType(var.getType());
+        if (!load_name.contains("%"))
+            load_name = '%'+load_name;
 
-        this.writeString("\t%_"+reg_num+++" = load "+type+", "+type+"* "+load_name+'\n');
-        return "%_"+(reg_num-1);    // returns where value was loaded
+        if (allClasses.varIsField(var.getName(), scope))
+            load_name = writeLoadField(var);
+
+        this.writeString("\t%_"+var_reg+++" = load "+type+", "+type+"* "+load_name+'\n');
+        return "%_"+(var_reg-1);    // returns where value was loaded
     }
 
-    //TODO: IF, AND, WHILE, ARRAYLENGTH, NOTEXPRESSION
+    /** same as above but without a var object. doesn't always load **/
+    public String writeLoadValue(String var_name, String scope) throws IOException
+    {
+        VariableData var = allClasses.findVariable(var_name, scope);
+        if (var == null)    // it's not a variable
+            return var_name;
+
+        String type = changeClassType(var.getType());
+        if (!var_name.contains("%"))
+            var_name = '%'+var_name;
+
+        if (allClasses.varIsField(var_name, scope))
+            var_name = writeLoadField(var);
+
+        this.writeString("\t%_"+var_reg+++" = load "+type+", "+type+"* "+var_name+'\n');
+        return "%_"+(var_reg-1);    // returns where value was loaded
+    }
+
+
+    /** resets all registers to 0 **/
+    public void resetAllRegisters()
+    {
+        var_reg = 0;
+        and_reg = 0;
+        if_reg = 0;
+        nsz_reg = 0;
+        oob_reg = 0;
+        while_reg = 0;
+    }
+
+    /** changes class type to i8* **/
+    public String changeClassType(String type)
+    {
+        if (!type.equals("i32") && !type.equals("i32*") && !type.equals("i1"))
+            type = "i8*";
+
+        return type;
+    }
+
+    //TODO: WHILE
     //TODO: END: accept paths in input files
 }
