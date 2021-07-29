@@ -1,9 +1,5 @@
 Compilers Project 3
 -----------------
-Kanellaki Maria-Anna  -  1115201400060
-
-
------------------
 
 Compile instructions: $ make
 
